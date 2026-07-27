@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Featherplay",
+  "version": "2.0.0",
+  "description": "Replaces a page's video player with a live stream re-encoded by a local transcode server, to save CPU/battery on low-power clients. Works on any site yt-dlp supports.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "featherplay@local"
+    }
+  },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "optional_host_permissions": ["http://*/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Featherplay"
+  }
+}

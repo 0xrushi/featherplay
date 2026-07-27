@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { font: 13px system-ui, sans-serif; width: 260px; padding: 10px; }
+  label { display: block; margin-top: 8px; font-weight: 600; }
+  input[type="url"] { width: 100%; box-sizing: border-box; padding: 4px; margin-top: 2px; }
+  .row { display: flex; gap: 6px; margin-top: 10px; }
+  button { padding: 5px 10px; }
+  #activate { width: 100%; margin-top: 12px; padding: 8px; font-weight: 600; }
+  #status { margin-top: 10px; font-size: 12px; }
+  .ok { color: #1a7f37; }
+  .err { color: #cf222e; }
+  .hint { color: #666; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <label for="serverUrl">Transcode server URL</label>
+  <input id="serverUrl" type="url" placeholder="http://192.168.1.50:8080" />
+
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="ping">Test connection</button>
+  </div>
+
+  <button id="activate">Activate on this tab</button>
+  <div class="hint">Click on any page with a video (YouTube, Vimeo, etc.) to swap it for the transcoded stream.</div>
+
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

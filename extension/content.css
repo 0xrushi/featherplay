@@ -1,0 +1,10 @@
+.yrt-native-hidden {
+  visibility: hidden !important;
+}
+
+.yrt-video {
+  position: fixed;
+  z-index: 2147483647;
+  background: #000;
+  object-fit: contain;
+}

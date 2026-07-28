@@ -3,27 +3,29 @@
 Offloads video decoding to a beefier machine on your LAN. That machine
 pulls the video with `yt-dlp` (1000+ sites supported — YouTube, Vimeo,
 Twitch VODs, Dailymotion, etc.), re-encodes it live to H.264 with `ffmpeg`
-(NVENC) into fragmented MP4, and a Firefox extension swaps the page's
+(NVENC, VAAPI, or software x264) into fragmented MP4, and a Firefox extension swaps the page's
 video player for one fed via MediaSource Extensions from that stream. The
 low-power client (e.g. a Raspberry Pi) only ever has to hardware-decode
-H.264 — never software-decode VP9/AV1/AV1 — which is where most of the
+H.264 — never software-decode VP9/AV1 — which is where most of the
 CPU/battery drain comes from.
 
 ```
 [ Raspberry Pi / Firefox ]  <--H.264 fragmented MP4 (MSE)--  [ Node server ]
-        extension                                             yt-dlp | ffmpeg (NVENC)
+        extension                                             yt-dlp | ffmpeg
                                                                     ^
                                                         pulls from whatever
                                                         site yt-dlp supports
 ```
 
-## 1. Server setup (the NVIDIA machine)
+## 1. Server setup (the transcode machine)
 
 Prerequisites:
 - Node.js 18+
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`
-- `ffmpeg` built with NVENC support (`ffmpeg -encoders | grep nvenc` should
-  list `h264_nvenc`) and a recent NVIDIA driver
+- `ffmpeg` with an H.264 encoder appropriate for the server:
+  - **NVIDIA:** `h264_nvenc` (the default)
+  - **AMD / Intel on Linux:** `h264_vaapi`, plus VAAPI drivers and access to a DRM render node
+  - **Fallback:** `libx264` (software encoding)
 
 ```bash
 cd server
@@ -39,6 +41,33 @@ By default it listens on `0.0.0.0:8080`. Env vars you can override:
 | `MAX_HEIGHT` | `1080` | Default resolution cap |
 | `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary |
 | `FFMPEG_BIN` | `ffmpeg` | Path to the ffmpeg binary |
+| `VIDEO_ENCODER` | `h264_nvenc` | `h264_nvenc`, `h264_vaapi`, or `libx264` |
+| `VAAPI_DEVICE` | — | Required with `VIDEO_ENCODER=h264_vaapi`; Linux DRM render node, e.g. `/dev/dri/renderD128` |
+
+### Encoder examples
+
+NVIDIA (default):
+
+```bash
+npm start
+```
+
+AMD or Intel on Linux with VAAPI:
+
+```bash
+VIDEO_ENCODER=h264_vaapi VAAPI_DEVICE=/dev/dri/renderD128 npm start
+```
+
+Use `ls -l /dev/dri/by-path/*-render` to map render nodes to PCI GPUs when
+the machine has more than one GPU. Confirm VAAPI support with `vainfo` and
+`ffmpeg -encoders | grep h264_vaapi`; the user running Featherplay must also
+be able to access the selected render node.
+
+CPU-only fallback:
+
+```bash
+VIDEO_ENCODER=libx264 npm start
+```
 
 Sanity check from any machine on the LAN (note the URL must be
 percent-encoded):

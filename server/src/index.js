@@ -1,10 +1,16 @@
 import express from "express";
 import { spawn } from "node:child_process";
 
+import { buildFfmpegArgs } from "./video-encoder.js";
+
 const PORT = process.env.PORT || 8080;
 const DEFAULT_MAX_HEIGHT = process.env.MAX_HEIGHT || "1080";
 const YTDLP_BIN = process.env.YTDLP_BIN || "yt-dlp";
 const FFMPEG_BIN = process.env.FFMPEG_BIN || "ffmpeg";
+// Keep the original NVIDIA-first behavior by default. AMD/Intel systems can
+// opt into VAAPI explicitly with VIDEO_ENCODER=h264_vaapi.
+const VIDEO_ENCODER = process.env.VIDEO_ENCODER || "h264_nvenc";
+const VAAPI_DEVICE = process.env.VAAPI_DEVICE;
 
 const app = express();
 
@@ -46,6 +52,18 @@ app.get("/stream", (req, res) => {
 
   const format = `bestvideo[height<=${maxHeight}]+bestaudio/best[height<=${maxHeight}]`;
 
+  // Validate encoder configuration before starting yt-dlp. Otherwise an
+  // invalid VIDEO_ENCODER would return an error while leaving yt-dlp running.
+  let ffmpegArgs;
+  try {
+    ffmpegArgs = buildFfmpegArgs({
+      encoder: VIDEO_ENCODER,
+      vaapiDevice: VAAPI_DEVICE,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
   // yt-dlp fetches + muxes source video/audio into a streamable Matroska
   // container on stdout (no temp files, no waiting for full download).
   // yt-dlp itself supports 1000+ sites, so this isn't YouTube-specific —
@@ -62,27 +80,12 @@ app.get("/stream", (req, res) => {
     sourceUrl,
   ]);
 
-  // ffmpeg re-encodes video to H.264 via NVENC (cheap to decode on
-  // low-power/ARM clients) and remuxes to fragmented MP4 so it can be fed
+  // ffmpeg re-encodes video to H.264 (cheap to decode on low-power/ARM
+  // clients) and remuxes to fragmented MP4 so it can be fed
   // into the extension's MediaSource pipeline. Profile/level are pinned so
   // the extension can declare an exact matching codec string
   // (avc1.640029 = High profile, level 4.1) for addSourceBuffer().
-  const ffmpeg = spawn(FFMPEG_BIN, [
-    "-i", "pipe:0",
-    "-c:v", "h264_nvenc",
-    "-preset", "p4",
-    "-profile:v", "high",
-    "-level:v", "4.1",
-    "-rc", "vbr",
-    "-cq", "23",
-    "-b:v", "0",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ac", "2",
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-    "-f", "mp4",
-    "pipe:1",
-  ]);
+  const ffmpeg = spawn(FFMPEG_BIN, ffmpegArgs);
 
   ytdlp.stdout.pipe(ffmpeg.stdin);
 
@@ -136,5 +139,6 @@ app.get("/stream", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`featherplay-server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Video encoder: ${VIDEO_ENCODER}${VIDEO_ENCODER === "h264_vaapi" ? ` (${VAAPI_DEVICE})` : ""}`);
   console.log(`Try: http://<this-machine-ip>:${PORT}/stream?url=${encodeURIComponent("https://www.youtube.com/watch?v=dQw4w9WgXcQ")}`);
 });

@@ -1,11 +1,12 @@
 {
   "name": "featherplay-server",
   "version": "1.0.0",
-  "description": "Pulls a YouTube video with yt-dlp and re-encodes it live with ffmpeg/NVENC to H.264 fragmented MP4 for low-power playback clients.",
+  "description": "Pulls video with yt-dlp and re-encodes it live with ffmpeg to H.264 fragmented MP4 for low-power playback clients.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.19.2"

@@ -87,7 +87,19 @@ app.get("/stream", (req, res) => {
   ytdlp.stdout.pipe(ffmpeg.stdin);
 
   ytdlp.stderr.on("data", (chunk) => process.stderr.write(`[yt-dlp ${sourceUrl}] ${chunk}`));
-  ffmpeg.stderr.on("data", () => {}); // ffmpeg is very chatty; drop unless debugging
+  // Killing ffmpeg while yt-dlp is still unwinding can make the child stdin
+  // emit EPIPE. Without a listener, Node treats that as an uncaught error and
+  // crashes the whole server when one browser tab disconnects.
+  ffmpeg.stdin.on("error", (err) => {
+    if (err.code !== "EPIPE") console.error(`[ffmpeg stdin ${sourceUrl}] ${err.message}`);
+  });
+
+  // Keep only a bounded stderr tail: ffmpeg is very chatty during a healthy
+  // stream, but its final lines are essential when startup or encoding fails.
+  let ffmpegStderr = "";
+  ffmpeg.stderr.on("data", (chunk) => {
+    ffmpegStderr = (ffmpegStderr + chunk).slice(-16_384);
+  });
 
   let responded = false;
   res.setHeader("Content-Type", "video/mp4");
@@ -114,7 +126,10 @@ app.get("/stream", (req, res) => {
     cleanup();
   });
   ffmpeg.on("close", (code) => {
-    if (code !== 0 && code !== null) console.error(`[ffmpeg ${sourceUrl}] exited with code ${code}`);
+    if (code !== 0 && code !== null) {
+      const detail = ffmpegStderr.trim();
+      console.error(`[ffmpeg ${sourceUrl}] exited with code ${code}${detail ? `\n${detail}` : ""}`);
+    }
     cleanup();
   });
 });

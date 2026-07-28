@@ -51,41 +51,76 @@
     });
   }
 
-  // Pumps raw response bytes into the SourceBuffer as they arrive. Chunks
-  // don't need to align to ISO-BMFF box boundaries — the browser's demuxer
-  // buffers partial boxes across appendBuffer() calls.
-  function pumpStream(reader, sourceBuffer, mediaSource) {
-    function push() {
-      reader
-        .read()
-        .then(({ done, value }) => {
-          if (done) {
-            if (mediaSource.readyState === "open") {
-              try {
-                mediaSource.endOfStream();
-              } catch {
-                /* video element may already be gone */
-              }
-            }
-            return;
-          }
-          appendChunk(value);
-        })
-        .catch((err) => {
-          if (err.name !== "AbortError") console.error("[featherplay] read failed:", err);
-        });
-    }
+  // The privileged background page fetches the HTTP stream because Firefox
+  // MV3 content scripts inherit the HTTPS page's mixed-content restrictions.
+  // Pull one chunk only after the prior SourceBuffer append completes, which
+  // provides backpressure all the way to the server response.
+  function pumpStream(port, sourceBuffer, mediaSource) {
+    let finished = false;
 
-    function appendChunk(chunk) {
-      sourceBuffer.addEventListener("updateend", push, { once: true });
+    function disconnect() {
+      if (finished) return;
+      finished = true;
       try {
-        sourceBuffer.appendBuffer(chunk);
-      } catch (err) {
-        console.error("[featherplay] appendBuffer failed:", err);
+        port.disconnect();
+      } catch {
+        /* extension may have been reloaded */
       }
     }
 
-    push();
+    function finish(error) {
+      if (error) console.error("[featherplay]", error);
+      if (mediaSource.readyState === "open") {
+        try {
+          if (error) {
+            mediaSource.endOfStream("network");
+          } else {
+            mediaSource.endOfStream();
+          }
+        } catch {
+          /* video element may already be gone */
+        }
+      }
+      disconnect();
+    }
+
+    function pull() {
+      try {
+        port.postMessage({ type: "pull" });
+      } catch (err) {
+        finish(`Could not request the next stream chunk: ${err.message}`);
+      }
+    }
+
+    port.onMessage.addListener((message) => {
+      if (message?.type === "ready") {
+        pull();
+        return;
+      }
+      if (message?.type === "end") {
+        finish();
+        return;
+      }
+      if (message?.type === "error") {
+        finish(message.message);
+        return;
+      }
+      if (message?.type !== "chunk" || finished) return;
+
+      sourceBuffer.addEventListener("updateend", pull, { once: true });
+      try {
+        sourceBuffer.appendBuffer(message.chunk);
+      } catch (err) {
+        finish(`Could not append a stream chunk: ${err.message}`);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (!finished) {
+        const detail = port.error?.message || "Background stream connection closed.";
+        finish(detail);
+      }
+    });
   }
 
   let nativeVideo;
@@ -146,13 +181,12 @@
   window.addEventListener("scroll", syncOverlayRect, true);
   new ResizeObserver(syncOverlayRect).observe(nativeVideo);
 
-  const abortController = new AbortController();
   const mediaSource = new MediaSource();
   customVideo.src = URL.createObjectURL(mediaSource);
 
   mediaSource.addEventListener(
     "sourceopen",
-    async () => {
+    () => {
       let sourceBuffer;
       try {
         sourceBuffer = mediaSource.addSourceBuffer(MIME_TYPE);
@@ -162,19 +196,17 @@
       }
 
       const streamUrl = `${serverUrl}/stream?url=${encodeURIComponent(location.href)}`;
-      let response;
+      let port;
       try {
-        response = await fetch(streamUrl, { signal: abortController.signal });
+        port = browser.runtime.connect({ name: "featherplay-stream" });
       } catch (err) {
-        if (err.name !== "AbortError") console.error("[featherplay] fetch failed:", err);
-        return;
-      }
-      if (!response.ok || !response.body) {
-        console.error("[featherplay] bad response:", response.status);
+        console.error("[featherplay] background connection failed:", err);
         return;
       }
 
-      pumpStream(response.body.getReader(), sourceBuffer, mediaSource);
+      pumpStream(port, sourceBuffer, mediaSource);
+      port.postMessage({ type: "start", url: streamUrl });
+      window.addEventListener("pagehide", () => port.disconnect(), { once: true });
     },
     { once: true },
   );
